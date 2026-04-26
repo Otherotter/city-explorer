@@ -9,16 +9,17 @@ import (
 	"os"
 	"time"
 
+	"github.com/Otherotter/city-explorer/services/api/internal/collector"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/joho/godotenv"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/yourusername/city-explorer-api/internal/collector"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
-	"github.com/yourusername/city-explorer-api/internal/db"
-	"github.com/yourusername/city-explorer-api/internal/handlers"
-	"github.com/yourusername/city-explorer-api/internal/telemetry"
+	"github.com/Otherotter/city-explorer/services/api/internal/db"
+	"github.com/Otherotter/city-explorer/services/api/internal/handlers"
+	"github.com/Otherotter/city-explorer/services/api/internal/telemetry"
+	"github.com/Otherotter/city-explorer/shared/observability"
 )
 
 type HealthResponse struct {
@@ -30,19 +31,16 @@ type HealthResponse struct {
 var database *sql.DB
 
 func main() {
-	// Set up JSON structured logging // This replaces all log.Printf calls
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	// Set as the default logger // Now slog.Info(), slog.Error() etc work everywhere
-	slog.SetDefault(logger)
+	// REPLACE with this
+	slog.SetDefault(observability.NewLogger("api"))
 	slog.Info("api service starting...")
 
 	ctx := context.Background()
+	// Try local dev path first, fall back silently
 	if err := godotenv.Load("../../.env"); err != nil {
-		slog.Info("no .env file found, reading from environment")
-		// log.Println("[api] no .env file found, reading from environment")
+		godotenv.Load(".env")
 	}
+	slog.Info("environment loaded")
 
 	// Initialize tracer // Must happen before any handlers are set up
 	shutdown, err := telemetry.InitTracer(ctx, "city-explorer-api")

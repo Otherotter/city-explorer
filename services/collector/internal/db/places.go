@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/yourusername/city-explorer-collector/internal/models"
+	"github.com/Otherotter/city-explorer/services/collector/internal/models"
 )
 
 // InsertPlace writes a single place to the database.

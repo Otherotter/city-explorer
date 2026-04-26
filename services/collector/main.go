@@ -14,9 +14,10 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/yourusername/city-explorer-collector/internal/config"
-	"github.com/yourusername/city-explorer-collector/internal/db"
-	"github.com/yourusername/city-explorer-collector/internal/fetchers/overpass"
+	"github.com/Otherotter/city-explorer/services/collector/internal/config"
+	"github.com/Otherotter/city-explorer/services/collector/internal/db"
+	"github.com/Otherotter/city-explorer/services/collector/internal/fetchers/overpass"
+	"github.com/Otherotter/city-explorer/shared/observability"
 )
 
 type HealthResponse struct {
@@ -30,18 +31,13 @@ var database *sql.DB
 func main() {
 	// ++++
 	// LOG <
-	// Set up JSON structured logging // This replaces all log.Printf calls
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	// Set as the default logger // Now slog.Info(), slog.Error() etc work everywhere
-	slog.SetDefault(logger)
+	slog.SetDefault(observability.NewLogger("collector"))
 	slog.Info("collector service starting...")
-
+	// Try local dev path first, fall back silently
 	if err := godotenv.Load("../../.env"); err != nil {
-		// log.Println("[collector] no .env file found, reading from environment")
-		slog.Info("no .env file found, reading from environment")
+		godotenv.Load(".env")
 	}
+	slog.Info("environment loaded")
 	// > LOG
 	// ++++
 
@@ -51,7 +47,7 @@ func main() {
 	database, err = db.Connect()
 	if err != nil {
 		// log.Fatalf("[collector] could not connect to database: %v", err)
-		slog.Error("no .env file found, reading from environment")
+		slog.Error("failed to connect to database", "error", err)
 		os.Exit(1)
 	}
 	defer database.Close()

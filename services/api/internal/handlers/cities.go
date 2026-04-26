@@ -11,8 +11,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/yourusername/city-explorer-api/internal/collector"
-	apidb "github.com/yourusername/city-explorer-api/internal/db"
+	"github.com/Otherotter/city-explorer/services/api/internal/collector"
+	apidb "github.com/Otherotter/city-explorer/services/api/internal/db"
 )
 
 type PlaceResponse struct {

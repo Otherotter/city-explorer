@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yourusername/city-explorer-collector/internal/models"
+	"github.com/Otherotter/city-explorer/services/collector/internal/models"
 )
 
 // The Overpass API endpoint. Public and free.
