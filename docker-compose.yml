@@ -1,0 +1,90 @@
+  services:
+    db:
+      image: postgres:16
+      container_name: city-explorer-db
+      restart: unless-stopped
+      environment:
+        POSTGRES_USER: ${POSTGRES_USER}
+        POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+        POSTGRES_DB: ${POSTGRES_DB}
+      ports:
+        - "${POSTGRES_PORT}:5432"
+      volumes:
+        - postgres_data:/var/lib/postgresql/data
+      healthcheck:
+        test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+        interval: 10s
+        timeout: 5s
+        retries: 5
+    api:
+      build:
+        context: ./services/api
+        dockerfile: Dockerfile
+      container_name: city-explorer-api
+      restart: unless-stopped
+      ports:
+        - "8080:8080"
+      environment:
+        COLLECTOR_URL: http://collector:8081
+        POSTGRES_HOST: db
+        POSTGRES_PORT: 5432
+        POSTGRES_USER: ${POSTGRES_USER}
+        POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+        POSTGRES_DB: ${POSTGRES_DB}
+        PORT: 8080
+        OTEL_EXPORTER_OTLP_ENDPOINT: alloy:4318   # ← add this
+
+      depends_on:
+        db:
+          condition: service_healthy
+        alloy:
+          condition: service_started
+
+
+    collector:
+      build:
+        context: ./services/collector
+      container_name: city-explorer-collector
+      restart: unless-stopped
+      ports:
+        - "8081:8081"
+      environment:
+        POSTGRES_HOST: db
+        POSTGRES_PORT: 5432
+        POSTGRES_USER: ${POSTGRES_USER}
+        POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+        POSTGRES_DB: ${POSTGRES_DB}
+        OTEL_EXPORTER_OTLP_ENDPOINT: alloy:4318   # ← add this
+
+
+      depends_on:
+        - db
+        - alloy
+    alloy:  
+      image: grafana/alloy:v1.12.1   # pin the version - better for producation
+      container_name: city-explorer-alloy  
+      restart: unless-stopped  
+      ports:  
+        - "12347:12345"   # Alloy UI  
+        - "4317:4317"     # OTLP gRPC (add if needed later)  
+        - "4318:4318"     # OTLP HTTP (add if needed later)  
+      volumes:  
+        - ./alloy/config.alloy:/etc/alloy/config.alloy  
+        - /var/run/docker.sock:/var/run/docker.sock  
+      environment:  
+        GRAFANA_PROMETHEUS_URL: ${GRAFANA_PROMETHEUS_URL}  
+        GRAFANA_PROMETHEUS_USERNAME: ${GRAFANA_PROMETHEUS_USERNAME}  
+        GRAFANA_LOKI_URL: ${GRAFANA_LOKI_URL}  
+        GRAFANA_LOKI_USERNAME: ${GRAFANA_LOKI_USERNAME}  
+        GRAFANA_TEMPO_URL: ${GRAFANA_TEMPO_URL}
+        GRAFANA_TEMPO_USERNAME: ${GRAFANA_TEMPO_USERNAME}
+        GRAFANA_API_KEY: ${GRAFANA_API_KEY}  
+        POSTGRES_DSN: ${POSTGRES_DSN}    # ← must be explicitly listed  
+      command:  
+        - run  
+        - /etc/alloy/config.alloy  
+      depends_on:  
+        db:  
+          condition: service_healthy  
+  volumes:
+    postgres_data:

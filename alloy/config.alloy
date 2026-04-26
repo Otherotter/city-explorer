@@ -1,0 +1,124 @@
+// ── Metrics ──────────────────────────────────────────  
+
+prometheus.scrape "api" {  
+  targets = [{  
+    __address__ = "api:8080",  
+    service     = "api",  
+    project     = "city-explorer",  
+  }]  
+  scrape_interval = "15s"  
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]  
+}  
+
+prometheus.scrape "collector" {  
+  targets = [{  
+    __address__ = "collector:8081",  
+    service     = "collector",  
+    project     = "city-explorer",  
+  }]  
+  scrape_interval = "15s"  
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]  
+}  
+
+prometheus.exporter.postgres "city_explorer_db" {  
+  data_source_names = [env("POSTGRES_DSN")]  
+}  
+
+prometheus.scrape "postgres" {  
+  targets         = prometheus.exporter.postgres.city_explorer_db.targets  
+  scrape_interval = "15s"  
+  forward_to      = [prometheus.relabel.postgres_labels.receiver]  
+}  
+
+prometheus.relabel "postgres_labels" {  
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]  
+  rule {  
+    target_label = "service"  
+    replacement  = "postgres"  
+  }  
+  rule {  
+    target_label = "project"  
+    replacement  = "city-explorer"  
+  }  
+}  
+
+prometheus.remote_write "grafana_cloud" {  
+  endpoint {  
+    url = env("GRAFANA_PROMETHEUS_URL")  
+    basic_auth {  
+      username = env("GRAFANA_PROMETHEUS_USERNAME")  
+      password = env("GRAFANA_API_KEY")  
+    }  
+  }  
+}  
+
+// ── Logs ─────────────────────────────────────────────  
+
+discovery.docker "containers" {  
+  host             = "unix:///var/run/docker.sock"  
+  refresh_interval = "5s"  
+  filter {  
+    name   = "name"  
+    values = ["city-explorer-api", "city-explorer-collector"]  
+  }  
+}  
+
+discovery.relabel "containers" {  
+  targets = discovery.docker.containers.targets  
+
+  rule {  
+    source_labels = ["__meta_docker_container_name"]  
+    regex         = "/(.+)"  
+    target_label  = "container"  
+  }  
+  rule {  
+    source_labels = ["__meta_docker_container_name"]  
+    regex         = "/city-explorer-(.+)"  
+    target_label  = "service"  
+  }  
+  rule {  
+    target_label = "project"  
+    replacement  = "city-explorer"  
+  }  
+}  
+
+loki.source.docker "containers" {  
+  host       = "unix:///var/run/docker.sock"  
+  targets    = discovery.relabel.containers.output  
+  forward_to = [loki.write.grafana_cloud.receiver]  
+}  
+
+loki.write "grafana_cloud" {  
+  endpoint {  
+    url = env("GRAFANA_LOKI_URL")  
+    basic_auth {  
+      username = env("GRAFANA_LOKI_USERNAME")  
+      password = env("GRAFANA_API_KEY")  
+    }  
+  }  
+}  
+
+// ── Traces ───────────────────────────────────────────
+
+// Receive traces from your services via OTLP HTTP
+otelcol.receiver.otlp "default" {
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+  output {
+    traces = [otelcol.exporter.otlphttp.grafana_cloud.input]
+  }
+}
+
+// Forward traces to Grafana Cloud Tempo
+otelcol.exporter.otlphttp "grafana_cloud" {
+  client {
+    endpoint = env("GRAFANA_TEMPO_URL")
+    auth     = otelcol.auth.basic.grafana_cloud.handler
+  }
+}
+
+otelcol.auth.basic "grafana_cloud" {
+  username = env("GRAFANA_TEMPO_USERNAME")
+  password = env("GRAFANA_API_KEY")
+}
