@@ -10,8 +10,9 @@ import (
 	"time"
 
 	"github.com/Otherotter/city-explorer/services/api/internal/collector"
+	"github.com/Otherotter/city-explorer/shared/observability"
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/joho/godotenv"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -19,7 +20,6 @@ import (
 	"github.com/Otherotter/city-explorer/services/api/internal/db"
 	"github.com/Otherotter/city-explorer/services/api/internal/handlers"
 	"github.com/Otherotter/city-explorer/services/api/internal/telemetry"
-	"github.com/Otherotter/city-explorer/shared/observability"
 )
 
 type HealthResponse struct {
@@ -73,8 +73,9 @@ func main() {
 	}
 
 	r := chi.NewRouter()
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
+	// Replace middleware.Logger with:
+	r.Use(chimiddleware.Recoverer)
+	r.Use(observability.RequestLogger)
 
 	// System routes — no tracing needed
 	r.Get("/health", healthHandler)
