@@ -26,23 +26,26 @@ type HealthResponse struct {
 	Timestamp string `json:"timestamp"`
 }
 
+// collectorHandler holds dependencies for the collect endpoint.
+// This is dependency injection — metrics and db passed in,
+// not accessed as globals.
+type collectorHandler struct {
+	db      *sql.DB
+	metrics *observability.CollectorMetrics
+}
+
 var database *sql.DB
 
 func main() {
-	// ++++
-	// LOG <
 	slog.SetDefault(observability.NewLogger("collector"))
 	slog.Info("collector service starting...")
+
 	// Try local dev path first, fall back silently
 	if err := godotenv.Load("../../.env"); err != nil {
 		godotenv.Load(".env")
 	}
 	slog.Info("environment loaded")
-	// > LOG
-	// ++++
 
-	// ++++
-	// DB <
 	var err error
 	database, err = db.Connect()
 	if err != nil {
@@ -52,9 +55,16 @@ func main() {
 	}
 	defer database.Close()
 	// log.Println("[collector] connected to database")
-	slog.Info("database connected") // New Logging
-	// > DB
-	// ++++
+	slog.Info("database connected")
+
+	// Initialize metrics once at startup
+	// promauto registers them with the default registry
+	// promhttp.Handler() serves them at /metrics
+	metrics := observability.NewCollectorMetrics()
+	h := &collectorHandler{
+		db:      database,
+		metrics: metrics,
+	}
 
 	r := chi.NewRouter()
 	r.Use(chimiddleware.Recoverer)
@@ -62,12 +72,10 @@ func main() {
 
 	r.Get("/health", healthHandler)
 	r.Handle("/metrics", promhttp.Handler())
-	r.Post("/collect/{city}/{category}", collectHandler)
-
+	r.Post("/collect/{city}/{category}", h.collectHandler)
+	// r.Post("/collect/{city}/{category}", collectHandler)
+	slog.Info("collector listening", "port", 8081)
 	//log.Println("[collector] starting on port 8081") // Old Logging
-	slog.Info("starting service",
-		"port", 8081, // note: city_name not city
-	)
 
 	if err := http.ListenAndServe(":8081", r); err != nil {
 		// log.Fatalf("[collector] failed: %v", err)
@@ -87,7 +95,7 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-func collectHandler(w http.ResponseWriter, r *http.Request) {
+func (h *collectorHandler) collectHandler(w http.ResponseWriter, r *http.Request) {
 	// citySlug := chi.URLParam(r, "city")
 	// categorySlug := chi.URLParam(r, "category")
 	citySlug := chi.URLParam(r, "city")
@@ -113,39 +121,44 @@ func collectHandler(w http.ResponseWriter, r *http.Request) {
 	`, citySlug).Scan(&cityID, &bbox)
 
 	if err == sql.ErrNoRows {
-		// log.Printf("[collector] city not found: %s", citySlug) // Old Logging
 		slog.Warn("city not found", "city", citySlug)
+		h.metrics.CollectionErrors.
+			WithLabelValues("db_lookup", categorySlug).Inc()
 		http.Error(w, "city not found", http.StatusNotFound)
 		return
 	}
+
 	if err != nil {
-		// log.Printf("[collector] db error looking up city: %v", err)
 		slog.Error("db error looking up city",
 			"city", citySlug,
 			"error", err,
 		)
+		h.metrics.CollectionErrors.
+			WithLabelValues("db_lookup", categorySlug).Inc()
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 	if bbox == "" {
-		// log.Printf("[collector] no bounding box for city: %s", citySlug)
 		slog.Warn("city has no bounding box",
 			"city", citySlug,
 			"city_id", cityID,
 		)
+		h.metrics.CollectionErrors.
+			WithLabelValues("db_lookup", categorySlug).Inc()
 		http.Error(w, "city has no bounding box configured", http.StatusUnprocessableEntity)
 		return
 	}
 
-	// Step 2 — look up category from DB
+	// Step 2 — look up category
 	var categoryID int
-	err = database.QueryRow(`
+	err = h.db.QueryRow(`
 		SELECT id FROM categories WHERE slug = $1
 	`, categorySlug).Scan(&categoryID)
 
 	if err == sql.ErrNoRows {
-		// log.Printf("[collector] category not found: %s", categorySlug)
 		slog.Warn("category not found", "category", categorySlug)
+		h.metrics.CollectionErrors.
+			WithLabelValues("db_lookup", categorySlug).Inc()
 		http.Error(w, "category not found", http.StatusNotFound)
 		return
 	}
@@ -159,54 +172,79 @@ func collectHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 3 — get amenities for this category
+	// Step 3 — get amenities
 	amenities := config.AmenitiesForCategory(categorySlug)
 	if len(amenities) == 0 {
-		// log.Printf("[collector] no amenities configured for category: %s", categorySlug)
-		slog.Warn("no amenities configured for category",
+		slog.Warn("no amenities configured",
 			"category", categorySlug,
 		)
+		h.metrics.CollectionErrors.
+			WithLabelValues("config", categorySlug).Inc()
 		http.Error(w, "no amenities configured for this category", http.StatusUnprocessableEntity)
 		return
 	}
+
 	slog.Info("fetching from overpass",
 		"city", citySlug,
 		"category", categorySlug,
 		"amenity_count", len(amenities),
 		"bbox", bbox,
 	)
-
 	// Step 4 — fetch from Overpass
+	// Time this separately from total collection time
+	overpassStart := time.Now()
 	places, err := overpass.FetchPlaces(cityID, categoryID, amenities, bbox)
+	overpassDuration := time.Since(overpassStart)
+
+	// Always record duration even on failure
+	h.metrics.OverpassDuration.
+		WithLabelValues(categorySlug).
+		Observe(overpassDuration.Seconds())
+
 	if err != nil {
-		// log.Printf("[collector] fetch failed: %v", err)
 		slog.Error("overpass fetch failed",
 			"city", citySlug,
 			"category", categorySlug,
 			"error", err,
-			"duration_ms", time.Since(start).Milliseconds(),
+			"duration_ms", overpassDuration.Milliseconds(),
 		)
+		h.metrics.OverpassRequests.
+			WithLabelValues("error", categorySlug).Inc()
+		h.metrics.CollectionErrors.
+			WithLabelValues("overpass", categorySlug).Inc()
 		http.Error(w, "collection failed", http.StatusInternalServerError)
 		return
 	}
 
+	h.metrics.OverpassRequests.
+		WithLabelValues("success", categorySlug).Inc()
+
+	slog.Info("overpass fetch complete",
+		"city", citySlug,
+		"category", categorySlug,
+		"fetched", len(places),
+		"duration_ms", overpassDuration.Milliseconds(),
+	)
+
 	// Step 5 — insert into DB
-	inserted, err := db.InsertPlaces(database, places)
+	inserted, err := db.InsertPlaces(h.db, places)
 	if err != nil {
-		// log.Printf("[collector] insert failed: %v", err)
 		slog.Error("db insert failed",
 			"city", citySlug,
 			"category", categorySlug,
 			"fetched", len(places),
 			"error", err,
-			"duration_ms", time.Since(start).Milliseconds(),
 		)
+		h.metrics.CollectionErrors.
+			WithLabelValues("db_insert", categorySlug).Inc()
 		http.Error(w, "database write failed", http.StatusInternalServerError)
 		return
 	}
 
-	// Old Logging
-	// log.Printf("[collector] complete: city=%s category=%s fetched=%d inserted=%d", citySlug, categorySlug, len(places), inserted)
+	h.metrics.PlacesInserted.
+		WithLabelValues(citySlug, categorySlug).
+		Add(float64(inserted))
+
 	slog.Info("collection complete",
 		"city", citySlug,
 		"category", categorySlug,
