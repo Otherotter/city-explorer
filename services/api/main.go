@@ -19,7 +19,6 @@ import (
 
 	"github.com/Otherotter/city-explorer/services/api/internal/db"
 	"github.com/Otherotter/city-explorer/services/api/internal/handlers"
-	"github.com/Otherotter/city-explorer/services/api/internal/telemetry"
 )
 
 type HealthResponse struct {
@@ -31,30 +30,28 @@ type HealthResponse struct {
 var database *sql.DB
 
 func main() {
+	ctx := context.Background()
+
 	// REPLACE with this
 	slog.SetDefault(observability.NewLogger("api"))
 	slog.Info("api service starting...")
 
-	ctx := context.Background()
+	shutdown, traceerr := observability.InitTracer(ctx, "city-explorer-api")
+	if traceerr != nil {
+		slog.Error("failed to init tracer", "error", traceerr)
+		os.Exit(1)
+	}
+	defer shutdown(ctx)
+	slog.Info("tracer initialized")
+
 	// Try local dev path first, fall back silently
 	if err := godotenv.Load("../../.env"); err != nil {
 		godotenv.Load(".env")
 	}
 	slog.Info("environment loaded")
 
-	// Initialize tracer // Must happen before any handlers are set up
-	shutdown, err := telemetry.InitTracer(ctx, "city-explorer-api")
-	if err != nil {
-		// log.Fatalf("[api] failed to init tracer: %v", err) // Old Logging
-		slog.Error("failed to init tracer", "error", err)
-		os.Exit(1)
-	}
-	defer shutdown(ctx)
-
-	slog.Info("tracer initialized") // New Logging
-	// log.Println("[api] tracer initialized") // Old Logging
-
 	// Connect to database
+	var err error
 	database, err = db.Connect()
 	if err != nil {
 		// log.Fatalf("[api] could not connect to database: %v", err)

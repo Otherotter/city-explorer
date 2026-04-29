@@ -1,4 +1,4 @@
-package telemetry
+package observability
 
 //What tracer.go Actually Is
 //tracer.go is not a template. It is not magic. It is just a Go file that configures the OpenTelemetry SDK and tells it two things:

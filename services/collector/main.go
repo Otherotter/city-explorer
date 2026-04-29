@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"log/slog"
@@ -37,8 +38,19 @@ type collectorHandler struct {
 var database *sql.DB
 
 func main() {
+	ctx := context.Background()
+
 	slog.SetDefault(observability.NewLogger("collector"))
 	slog.Info("collector service starting...")
+	// Initialize tracer
+	shutdown, traceerr := observability.InitTracer(ctx, "city-explorer-collector")
+
+	if traceerr != nil {
+		slog.Error("failed to init tracer", "error", traceerr)
+		os.Exit(1)
+	}
+	defer shutdown(ctx)
+	slog.Info("tracer initialized")
 
 	// Try local dev path first, fall back silently
 	if err := godotenv.Load("../../.env"); err != nil {
@@ -193,7 +205,7 @@ func (h *collectorHandler) collectHandler(w http.ResponseWriter, r *http.Request
 	// Step 4 — fetch from Overpass
 	// Time this separately from total collection time
 	overpassStart := time.Now()
-	places, err := overpass.FetchPlaces(cityID, categoryID, amenities, bbox)
+	places, err := overpass.FetchPlaces(r.Context(), cityID, categoryID, amenities, bbox)
 	overpassDuration := time.Since(overpassStart)
 
 	// Always record duration even on failure

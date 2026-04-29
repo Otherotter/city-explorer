@@ -1,9 +1,9 @@
 package overpass
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -11,15 +11,15 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	"github.com/Otherotter/city-explorer/services/collector/internal/models"
 )
 
-// The Overpass API endpoint. Public and free.
 const overpassURL = "https://overpass-api.de/api/interpreter"
 
-// Element is a single result from the Overpass API.
-// OSM returns nodes (points), ways (lines/areas),
-// and relations. We only care about nodes for now.
 type Element struct {
 	Type string  `json:"type"`
 	ID   int64   `json:"id"`
@@ -37,170 +37,144 @@ type Element struct {
 	} `json:"tags"`
 }
 
-// Response is the full Overpass API response.
 type Response struct {
 	Elements []Element `json:"elements"`
 }
 
 // FetchPlaces calls the Overpass API and returns
 // normalized Place models ready for the database.
-//
-// amenities is a list of OSM amenity types.
-// Example: []string{"restaurant", "cafe", "library"}
-//
-// bbox is the bounding box for the city.
-// Format: south, west, north, east
-func FetchPlaces(cityID int, categoryID int, amenities []string, bbox string) ([]models.Place, error) {
-	// Build the Overpass QL query
-	// This asks for all nodes within the
-	// bounding box that match our amenity types
+// ctx is passed through so traces span across
+// the full request journey.
+func FetchPlaces(ctx context.Context, cityID int, categoryID int, amenities []string, bbox string) ([]models.Place, error) {
 	query := buildQuery(amenities, bbox)
 
-	// Call the API
-	resp, err := callOverpass(query)
+	resp, err := callOverpass(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("overpass api call failed: %w", err)
 	}
 
-	// Normalize each element into our Place model
 	places := normalize(resp.Elements, cityID, categoryID)
-
 	return places, nil
 }
 
-// buildQuery constructs an Overpass QL query string.
 func buildQuery(amenities []string, bbox string) string {
 	var sb strings.Builder
-
 	sb.WriteString("[out:json][timeout:25];(\n")
-
 	for _, amenity := range amenities {
 		sb.WriteString(fmt.Sprintf(
 			"  node[\"amenity\"=\"%s\"](%s);\n",
 			amenity, bbox,
 		))
 	}
-
 	sb.WriteString(");out body;")
-
 	return sb.String()
 }
 
 // callOverpass makes the HTTP request to the Overpass API.
-func callOverpass(query string) (*Response, error) {
+// It creates a trace span so failures are visible in Tempo.
+func callOverpass(ctx context.Context, query string) (*Response, error) {
+	start := time.Now()
 
-	// log.Printf("[callOverpass] sending query:\n%s", query)
-	// log.Printf("[callOverpass] query length: %d", len(query))
-	// log.Printf("[callOverpass] url: %s", overpassURL)
-	slog.Info("calling OverPass APIs")
-	slog.Debug("query strucuture",
-		"query", query,
-		"query len", len(query),
-		"url", overpassURL,
+	// Start a trace span for this external API call
+	// This is the key instrumentation — when this fails
+	// the span shows as red in Tempo immediately
+	tracer := otel.Tracer("city-explorer-collector")
+	ctx, span := tracer.Start(ctx, "overpass.http_request")
+	defer span.End()
+
+	// Attach context to the span so it is searchable
+	span.SetAttributes(
+		attribute.String("url", overpassURL),
+		attribute.Int("query.length", len(query)),
 	)
 
-	// Build the form body manually so we can inspect it
+	slog.Info("calling overpass api",
+		"url", overpassURL,
+		"query_length", len(query),
+	)
+
 	formData := url.Values{"data": {query}}
 	encodedBody := formData.Encode()
-
-	log.Printf("[callOverpass] encoded body length: %d bytes", len(encodedBody))
-	log.Printf("[callOverpass] encoded body preview: %.100s...", encodedBody)
-	slog.Debug("encoded body",
-		"encoded body length", len(encodedBody),
-		"encoded body preview", encodedBody,
-	)
 
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 	}
 
-	// Build request manually instead of PostForm
-	// so we can set and inspect every header
-	req, err := http.NewRequest(
+	req, err := http.NewRequestWithContext(
+		ctx,
 		http.MethodPost,
 		overpassURL,
 		strings.NewReader(encodedBody),
 	)
 	if err != nil {
+		span.SetStatus(codes.Error, "failed to build request")
+		span.SetAttributes(attribute.String("error", err.Error()))
 		return nil, fmt.Errorf("failed to build request: %w", err)
 	}
 
-	// This is what PostForm sets internally
-	// We set it explicitly so we can confirm it is there
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-
-	// Adding a User-Agent is good practice for public APIs
-	// Some APIs block requests with no User-Agent
 	req.Header.Set("User-Agent", "city-explorer/1.0 (personal project)")
-
-	// log.Printf("[callOverpass] request headers: %v", req.Header)
-	// log.Printf("[callOverpass] sending to: %s", overpassURL)
 
 	resp, err := client.Do(req)
 	if err != nil {
+		span.SetStatus(codes.Error, "http request failed")
+		span.SetAttributes(attribute.String("error", err.Error()))
+		slog.Error("overpass http request failed",
+			"error", err,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
 		return nil, fmt.Errorf("http request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// log.Printf("[callOverpass] response status: %d", resp.StatusCode)
-	// log.Printf("[callOverpass] response headers: %v", resp.Header)
-	slog.Debug("built format",
-		"request_headers", req.Header,
-		"overpassURL", overpassURL,
-		"response_status", resp.StatusCode,
-		"response_headers", resp.Header,
+	duration := time.Since(start)
+
+	// Always record the status code on the span
+	// This is what makes failures visible in Tempo
+	span.SetAttributes(
+		attribute.Int("http.status_code", resp.StatusCode),
+		attribute.Int64("duration_ms", duration.Milliseconds()),
 	)
 
 	if resp.StatusCode != http.StatusOK {
-		// Read full error body from Overpass
-		body := make([]byte, 1000)
+		body := make([]byte, 500)
 		n, _ := resp.Body.Read(body)
-		log.Printf("[callOverpass] error response body:\n%s", string(body[:n]))
+
+		// Mark span as error — this turns it RED in Tempo
+		span.SetStatus(codes.Error, fmt.Sprintf("overpass returned %d", resp.StatusCode))
+
+		slog.Error("overpass returned error status",
+			"status_code", resp.StatusCode,
+			"response_body", string(body[:n]),
+			"duration_ms", duration.Milliseconds(),
+		)
 		return nil, fmt.Errorf("overpass returned status %d", resp.StatusCode)
 	}
 
 	var result Response
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		span.SetStatus(codes.Error, "failed to decode response")
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	// log.Printf("[callOverpass] success: %d elements returned", len(result.Elements))
+	// Success — mark span with result count
+	span.SetAttributes(attribute.Int("elements.returned", len(result.Elements)))
+	span.SetStatus(codes.Ok, "")
+
+	slog.Info("overpass request complete",
+		"status_code", resp.StatusCode,
+		"elements", len(result.Elements),
+		"duration_ms", duration.Milliseconds(),
+	)
 
 	return &result, nil
-	///----
-	//curl -X POST "https://overpass-api.de/api/interpreter" --data 'data=[out:json][timeout:25];(node["amenity"="restaurant"](40.4774,-74.2591,40.9176,-73.7004););out body;'  -v
-
-	// resp, err := client.PostForm(overpassURL, url.Values{
-	// 	"data": {query},
-	// })
-
-	// if err != nil {
-	// 	return nil, fmt.Errorf("http request failed: %w", err)
-	// }
-	// defer resp.Body.Close()
-
-	// if resp.StatusCode != http.StatusOK {
-	// 	return nil, fmt.Errorf("overpass returned status %d", resp.StatusCode)
-	// }
-
-	// var result Response
-	// if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-	// 	return nil, fmt.Errorf("failed to decode response: %w", err)
-	// }
-
-	// return &result, nil
 }
 
-// normalize converts raw Overpass elements into
-// your internal Place model. This is where you
-// own the data shape — not the external API.
 func normalize(elements []Element, cityID int, categoryID int) []models.Place {
 	places := make([]models.Place, 0, len(elements))
 
 	for _, el := range elements {
-		// Skip elements with no name
-		// They are not useful to us
 		if el.Tags.Name == "" {
 			continue
 		}
@@ -218,16 +192,13 @@ func normalize(elements []Element, cityID int, categoryID int) []models.Place {
 			SourceID:    strconv.FormatInt(el.ID, 10),
 		}
 
-		// Build address from parts if available
 		if el.Tags.HouseNumber != "" && el.Tags.Street != "" {
-			place.Address = fmt.Sprintf(
-				"%s %s",
+			place.Address = fmt.Sprintf("%s %s",
 				el.Tags.HouseNumber,
 				el.Tags.Street,
 			)
 		}
 
-		// Use cuisine as subcategory for food places
 		if el.Tags.Cuisine != "" {
 			place.Subcategory = el.Tags.Cuisine
 		}
