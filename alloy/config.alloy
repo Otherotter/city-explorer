@@ -20,28 +20,6 @@ prometheus.scrape "collector" {
   forward_to      = [prometheus.remote_write.grafana_cloud.receiver]  
 }  
 
-prometheus.exporter.postgres "city_explorer_db" {  
-  data_source_names = [env("POSTGRES_DSN")]  
-}  
-
-prometheus.scrape "postgres" {  
-  targets         = prometheus.exporter.postgres.city_explorer_db.targets  
-  scrape_interval = "15s"  
-  forward_to      = [prometheus.relabel.postgres_labels.receiver]  
-}  
-
-prometheus.relabel "postgres_labels" {  
-  forward_to = [prometheus.remote_write.grafana_cloud.receiver]  
-  rule {  
-    target_label = "service"  
-    replacement  = "postgres"  
-  }  
-  rule {  
-    target_label = "project"  
-    replacement  = "city-explorer"  
-  }  
-}  
-
 prometheus.remote_write "grafana_cloud" {  
   endpoint {  
     url = env("GRAFANA_PROMETHEUS_URL")  
@@ -121,4 +99,66 @@ otelcol.exporter.otlphttp "grafana_cloud" {
 otelcol.auth.basic "grafana_cloud" {
   username = env("GRAFANA_TEMPO_USERNAME")
   password = env("GRAFANA_API_KEY")
+}
+
+// ── Database Observability ────────────────────────────
+
+// FIX 5: removed space in path
+// local.file "postgres_secret_city_explorer_db" {
+//   filename  = "/var/lib/alloy/postgres_secret_city_explorer_db"
+//   is_secret = true
+// }
+
+// FIX 3: single exporter (removed duplicate city_explorer_db)
+// FIX 1: data_source_names uncommented — required
+prometheus.exporter.postgres "postgres_city_explorer_db" {
+  data_source_names  = [env("POSTGRES_MONITOR_DSN")]
+  enabled_collectors = ["stat_statements"]
+
+  stat_statements {
+    exclude_users = ["db-o11y"]
+  }
+
+  autodiscovery {
+    enabled = true
+    // database_denylist = ["rdsadmin"]
+  }
+}
+
+// FIX 2: data_source_name uncommented — required
+database_observability.postgres "postgres_city_explorer_db" {
+  data_source_name  = env("POSTGRES_MONITOR_DSN")  
+  forward_to        = [loki.relabel.database_observability_postgres_city_explorer_db.receiver]
+  targets           = prometheus.exporter.postgres.postgres_city_explorer_db.targets
+  enable_collectors = ["query_details", "query_samples", "schema_details", "explain_plans"]
+  exclude_users     = ["db-o11y"]
+  // exclude_databases = ["rdsadmin"]
+}
+
+// FIX 4: added required job label for DB o11y dashboards
+loki.relabel "database_observability_postgres_city_explorer_db" {
+  forward_to = [loki.write.grafana_cloud.receiver]
+
+  rule {
+    target_label = "job"
+    replacement  = "integrations/db-o11y"
+  }
+  rule {
+    target_label = "instance"
+    replacement  = "postgres_city_explorer_db"
+  }
+}
+
+discovery.relabel "database_observability_postgres_city_explorer_db" {
+  targets = database_observability.postgres.postgres_city_explorer_db.targets
+
+  rule {
+    target_label = "job"
+    replacement  = "integrations/db-o11y"
+  }
+}
+
+prometheus.scrape "database_observability_postgres_city_explorer_db" {
+  targets    = discovery.relabel.database_observability_postgres_city_explorer_db.output
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
 }

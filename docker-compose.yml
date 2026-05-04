@@ -11,6 +11,8 @@
         - "${POSTGRES_PORT}:5432"
       volumes:
         - postgres_data:/var/lib/postgresql/data
+        - ./db/postgres/postgresql.conf:/etc/postgres/postgresql.conf
+      command: postgres -c config_file=/etc/postgres/postgresql.conf
       healthcheck:
         test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
         interval: 10s
@@ -62,7 +64,7 @@
         - db
         - alloy
     alloy:  
-      image: grafana/alloy:v1.12.1   # pin the version - better for producation
+      image: grafana/alloy:v1.15.0   # pin the version - better for producation
       container_name: city-explorer-alloy  
       restart: unless-stopped  
       ports:  
@@ -81,9 +83,11 @@
         GRAFANA_TEMPO_USERNAME: ${GRAFANA_TEMPO_USERNAME}
         GRAFANA_API_KEY: ${GRAFANA_API_KEY}  
         POSTGRES_DSN: ${POSTGRES_DSN}    # ← must be explicitly listed  
+        POSTGRES_MONITOR_DSN: ${POSTGRES_MONITOR_DSN}
       command:  
         - run  
-        - /etc/alloy/config.alloy  
+        - /etc/alloy/config.alloy 
+        - --stability.level=experimental 
       depends_on:  
         db:  
           condition: service_healthy  
