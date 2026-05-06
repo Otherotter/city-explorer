@@ -9,6 +9,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/go-chi/cors"
+
 	"github.com/Otherotter/city-explorer/services/api/internal/collector"
 	"github.com/Otherotter/city-explorer/shared/observability"
 	"github.com/go-chi/chi/v5"
@@ -73,6 +75,24 @@ func main() {
 	// Replace middleware.Logger with:
 	r.Use(chimiddleware.Recoverer)
 	r.Use(observability.RequestLogger)
+
+	// Add CORS middleware
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins: []string{
+			"http://localhost:3000",
+		},
+		AllowedMethods: []string{
+			"GET", "POST", "PUT", "DELETE", "OPTIONS",
+		},
+		AllowedHeaders: []string{
+			"Accept",
+			"Authorization",
+			"Content-Type",
+			"X-CSRF-Token",
+		},
+		AllowCredentials: false,
+		MaxAge:           300,
+	}))
 
 	// System routes — no tracing needed
 	r.Get("/health", healthHandler)

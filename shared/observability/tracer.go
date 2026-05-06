@@ -52,6 +52,7 @@ func InitTracer(ctx context.Context, serviceName string) (func(context.Context) 
 		resource.WithAttributes(
 			semconv.ServiceName(serviceName),
 			semconv.ServiceVersion("0.1.0"),
+			semconv.ServiceNamespace("city-explorer"), // ← add this
 		),
 	)
 	if err != nil {
