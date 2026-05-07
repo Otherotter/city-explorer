@@ -128,6 +128,7 @@ jsonCopy{
 }
 
 ##Project Structure
+```
 city-explorer/
 ├── services/
 │   ├── api/                    Go API server
@@ -174,6 +175,7 @@ city-explorer/
 ├── docker-compose.yml
 ├── go.mod
 └── .env
+```
 
 ##Getting Started
 ###Prerequisites
@@ -184,9 +186,11 @@ Node.js 20+
 1. Clone and configure
 bashCopygit clone https://github.com/Otherotter/city-explorer.git
 cd city-explorer
-Create .env from the example:
-bashCopycp .env.example .env
 
+Create .env from the example:
+cp .env.example .env
+
+```
 *Fill in your values:*
 bashCopy# Database
 POSTGRES_USER=cityexplorer
@@ -210,8 +214,10 @@ GRAFANA_API_KEY=your_api_key
 
 # Collector
 COLLECTOR_URL=http://collector:8081
+```
 
 # Tracing
+```
 OTEL_EXPORTER_OTLP_ENDPOINT=alloy:4318
 2. Start the database
 bashCopydocker compose up db -d
@@ -224,12 +230,19 @@ bashCopycd frontend
 npm install
 npm run dev
 6. Open the app
-Copyhttp://localhost:3000
+http://localhost:3000
+```
 
 API Endpoints
+```
 MethodEndpointDescriptionGET/healthService health checkGET/metricsPrometheus metricsGET/cities/{name}/foodFood spotsGET/cities/{name}/natureNature spotsGET/cities/{name}/studyStudy spotsGET/cities/{name}/eventsEventsGET/cities/{name}/attractionAttractionsGET/cities/{name}/thriftThrift shopsGET/cities/{name}/socialSocial groupsGET/cities/{name}/architectureArchitecturePOST/personal-logLog a visitGET/personal-log/{city}Your visits
 Example
-bashCopycurl http://localhost:8080/cities/new%20york%20city/food
+```
+```
+curl http://localhost:8080/cities/new%20york%20city/food
+```
+
+```
 jsonCopy{
   "city": "new york city",
   "count": 100,
@@ -247,9 +260,10 @@ jsonCopy{
     }
   ]
 }
-
+```
 Data Sources
-SourceCategoriesLicenseOpenStreetMap via OverpassAllODbLOpenTripMapAttractionsCC BYNational Park ServiceNaturePublic DomainEventbriteEventsAPI TermsMeetupSocialAPI Terms
+
+> SourceCategoriesLicenseOpenStreetMap via OverpassAllODbLOpenTripMapAttractionsCC BYNational Park ServiceNaturePublic DomainEventbriteEventsAPI TermsMeetupSocialAPI Terms
 
 Database Schema
 Copycities ──< places ──< place_tags >── tags
