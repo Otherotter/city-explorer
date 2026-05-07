@@ -47,13 +47,14 @@ Collector Service (Go)    :8081
 │
 ▼
 PostgreSQL + PostGIS
-Copy
----
 
+
+
+---
 ## Tech Stack
 
 | Layer | Technology |
-|-------|-----------|
+|-------|------------|
 | Backend API | Go + Chi |
 | Data Collection | Go (Collector service) |
 | Database | PostgreSQL 16 + PostGIS |
@@ -74,13 +75,15 @@ first-class concern, not an afterthought.
 ### Three Pillars
 
 **Metrics → Prometheus**
-cityexplorer_collector_overpass_requests_total
-cityexplorer_collector_overpass_duration_seconds
-cityexplorer_collector_places_inserted_total
-cityexplorer_collector_errors_total
-pg_up, pg_database_size_bytes, pg_stat_*
-Copy
+> cityexplorer_collector_overpass_requests_total
+> cityexplorer_collector_overpass_duration_seconds
+> cityexplorer_collector_places_inserted_total
+> cityexplorer_collector_errors_total
+> pg_up, pg_database_size_bytes, pg_stat_*
 
+
+
+----
 **Logs → Loki**
 
 {
@@ -95,8 +98,12 @@ Copy
   "duration_ms": 9802
 }
 
-Traces → Tempo
-CopyGET /cities/new york city/food [38ms]
+
+
+-------
+**Traces → Tempo**
+
+GET /cities/new york city/food [38ms]
 ├── db.cities.lookup [2ms]
 ├── db.places.check_status [1ms]
 ├── collector.trigger [828ms]
@@ -120,8 +127,8 @@ jsonCopy{
   ...
 }
 
-Project Structure
-Copycity-explorer/
+##Project Structure
+city-explorer/
 ├── services/
 │   ├── api/                    Go API server
 │   │   ├── internal/
@@ -168,9 +175,10 @@ Copycity-explorer/
 ├── go.mod
 └── .env
 
-Getting Started
-Prerequisites
-CopyDocker + Docker Compose
+##Getting Started
+###Prerequisites
+
+Docker + Docker Compose
 Go 1.26+
 Node.js 20+
 1. Clone and configure
@@ -178,7 +186,8 @@ bashCopygit clone https://github.com/Otherotter/city-explorer.git
 cd city-explorer
 Create .env from the example:
 bashCopycp .env.example .env
-Fill in your values:
+
+*Fill in your values:*
 bashCopy# Database
 POSTGRES_USER=cityexplorer
 POSTGRES_PASSWORD=yourpassword
@@ -289,7 +298,7 @@ database_observability.postgres not working
   version string. Blocked by upstream bug.
 
 Roadmap
-Copy⬜ Remaining API routes (nature, study, events...)
+⬜ Remaining API routes (nature, study, events...)
 ⬜ Personal log entry form
 ⬜ Redis caching layer
 ⬜ Pagination
