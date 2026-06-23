@@ -111,16 +111,7 @@ func (h *CitiesHandler) FoodHandler(w http.ResponseWriter, r *http.Request) {
 			"reason_stale", status.IsStale,
 		)
 
-		ctx, collectSpan := tracer.Start(ctx, "collector.trigger")
-		collectSpan.SetAttributes(
-			attribute.String("city", cityName),
-			attribute.String("category", "food"),
-			attribute.Bool("is_empty", status.IsEmpty),
-			attribute.Bool("is_stale", status.IsStale),
-		)
-
 		err := h.CollectorClient.Collect(ctx, cityName, "food")
-		collectSpan.End()
 
 		if err != nil {
 			// Collection failed but we can still try to return

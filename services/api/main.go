@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-chi/cors"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/Otherotter/city-explorer/services/api/internal/collector"
 	"github.com/Otherotter/city-explorer/shared/observability"
@@ -17,7 +18,6 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/joho/godotenv"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/Otherotter/city-explorer/services/api/internal/db"
 	"github.com/Otherotter/city-explorer/services/api/internal/handlers"
@@ -94,22 +94,35 @@ func main() {
 		MaxAge:           300,
 	}))
 
-	// System routes — no tracing needed
+	// Routes
+	// No per-route otelhttp needed anymore
+	// The global handler below covers everything
 	r.Get("/health", healthHandler)
 	r.Handle("/metrics", promhttp.Handler())
+	// r.Get("/cities/{name}/food", citiesHandler.FoodHandler)
+	// City routes — traced individually
+	// Apply otelhttp per route group
+	// This correctly propagates context into handlers
 
-	// City routes — wrapped with otelhttp
-	// This automatically creates a trace span
-	// for every request to these routes
-	r.With(otelhttp.NewMiddleware("cities")).
-		Get("/cities/{name}/food", citiesHandler.FoodHandler)
+	r.Route("/cities/{name}", func(r chi.Router) {
+		r.Use(func(next http.Handler) http.Handler {
+			return otelhttp.NewHandler(next, "cities",
+				otelhttp.WithMessageEvents(
+					otelhttp.ReadEvents,
+					otelhttp.WriteEvents,
+				),
+			)
+		})
+		r.Get("/food", citiesHandler.FoodHandler)
+		// Add other categories here as you build them
+		// r.Get("/nature", citiesHandler.NatureHandler)
+		// r.Get("/study", citiesHandler.StudyHandler)
+	})
 
 	port := getEnv("PORT", "8080")
-	// log.Printf("[api] server starting on port %s", port) //Old Logging
-	slog.Info("server started", "port", port) // New Logging
+	slog.Info("server started", "port", port)
 
 	if err := http.ListenAndServe(":"+port, r); err != nil {
-		// log.Fatalf("[api] server failed: %v", err)
 		slog.Error("server failed", "error", err)
 		os.Exit(1)
 	}

@@ -13,6 +13,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
@@ -52,7 +53,7 @@ func InitTracer(ctx context.Context, serviceName string) (func(context.Context) 
 		resource.WithAttributes(
 			semconv.ServiceName(serviceName),
 			semconv.ServiceVersion("0.1.0"),
-			semconv.ServiceNamespace("city-explorer"), // ← add this
+			semconv.ServiceNamespace("city-explorer"),
 		),
 	)
 	if err != nil {
@@ -67,6 +68,10 @@ func InitTracer(ctx context.Context, serviceName string) (func(context.Context) 
 		sdktrace.WithResource(res),
 		sdktrace.WithSampler(sdktrace.AlwaysSample()),
 	)
+
+	//Add Propagator To tracer.go
+	//Since both services call observability.InitTracer() this registers the propagator for both services automatically. You do not need to add it to each main.go separately.
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 
 	// Register as the global tracer provider
 	// Now any code can call otel.Tracer() to get a tracer

@@ -107,6 +107,7 @@ func callOverpass(ctx context.Context, query string) (*Response, error) {
 		strings.NewReader(encodedBody),
 	)
 	if err != nil {
+		span.RecordError(err)
 		span.SetStatus(codes.Error, "failed to build request")
 		span.SetAttributes(attribute.String("error", err.Error()))
 		return nil, fmt.Errorf("failed to build request: %w", err)
@@ -118,6 +119,7 @@ func callOverpass(ctx context.Context, query string) (*Response, error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
+		span.RecordError(err)
 		span.SetStatus(codes.Error, "http request failed")
 		span.SetAttributes(attribute.String("error", err.Error()))
 		slog.Error("overpass http request failed",
@@ -142,6 +144,7 @@ func callOverpass(ctx context.Context, query string) (*Response, error) {
 		n, _ := resp.Body.Read(body)
 
 		// Mark span as error — this turns it RED in Tempo
+		span.RecordError(err)
 		span.SetStatus(codes.Error, fmt.Sprintf("overpass returned %d", resp.StatusCode))
 
 		slog.Error("overpass returned error status",
@@ -154,6 +157,7 @@ func callOverpass(ctx context.Context, query string) (*Response, error) {
 
 	var result Response
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		span.RecordError(err)
 		span.SetStatus(codes.Error, "failed to decode response")
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
