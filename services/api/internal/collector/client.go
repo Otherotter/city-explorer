@@ -9,6 +9,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 // Client calls the Collector service.
@@ -53,6 +54,9 @@ func (c *Client) Collect(ctx context.Context, city string, category string) erro
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
+
+	// Inject trace context into outbound HTTP headers    // The Collector reads these and continues the same trace
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header)) // ← add this
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
